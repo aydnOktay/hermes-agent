@@ -3,6 +3,8 @@
 import os
 import json
 import shutil
+import logging
+import subprocess
 import pytest
 from pathlib import Path
 from unittest.mock import patch

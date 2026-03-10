@@ -256,15 +256,7 @@ async def vision_analyze_tool(
 
         logger.info("Analyzing image: %s", image_url[:60])
         logger.info("User prompt: %s", user_prompt[:100])
-        
-        # Check auxiliary vision client availability
-        if _aux_async_client is None or DEFAULT_VISION_MODEL is None:
-            return json.dumps({
-                "success": False,
-                "analysis": "Vision analysis unavailable: no auxiliary vision model configured. "
-                            "Set OPENROUTER_API_KEY or configure Nous Portal to enable vision tools."
-            }, indent=2, ensure_ascii=False)
-        
+
         # Determine if this is a local file path or a remote URL
         local_path = Path(image_url)
         if local_path.is_file():
@@ -321,7 +313,25 @@ async def vision_analyze_tool(
         ]
         
         logger.info("Processing image with %s...", model)
-        
+
+        # Check auxiliary vision client availability just before the API call so that
+        # earlier failures (like download errors) still go through the main try/except
+        # and get logged with exc_info for debugging/tests.
+        if _aux_async_client is None or DEFAULT_VISION_MODEL is None:
+            logger.error(
+                "Vision analysis unavailable: no auxiliary vision model configured. "
+                "Set OPENROUTER_API_KEY or configure Nous Portal to enable vision tools.",
+            )
+            return json.dumps(
+                {
+                    "success": False,
+                    "analysis": "Vision analysis unavailable: no auxiliary vision model configured. "
+                    "Set OPENROUTER_API_KEY or configure Nous Portal to enable vision tools.",
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+
         # Call the vision API
         from agent.auxiliary_client import get_auxiliary_extra_body, auxiliary_max_tokens_param
         _extra = get_auxiliary_extra_body()
