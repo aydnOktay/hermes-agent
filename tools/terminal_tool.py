@@ -1110,18 +1110,38 @@ def check_terminal_requirements() -> bool:
         elif env_type == "ssh":
             from tools.environments.ssh import SSHEnvironment
             # Check that host and user are configured
-            return bool(config.get("ssh_host")) and bool(config.get("ssh_user"))
+            if not config.get("ssh_host") or not config.get("ssh_user"):
+                logger.error(
+                    "SSH backend selected but TERMINAL_SSH_HOST and TERMINAL_SSH_USER "
+                    "are not both set. Configure both or switch TERMINAL_ENV to 'local'."
+                )
+                return False
+            return True
         elif env_type == "modal":
             from minisweagent.environments.extra.swerex_modal import SwerexModalEnvironment
             # Check for modal token
-            return os.getenv("MODAL_TOKEN_ID") is not None or Path.home().joinpath(".modal.toml").exists()
+            has_token = os.getenv("MODAL_TOKEN_ID") is not None
+            has_config = Path.home().joinpath(".modal.toml").exists()
+            if not (has_token or has_config):
+                logger.error(
+                    "Modal backend selected but no MODAL_TOKEN_ID environment variable "
+                    "or ~/.modal.toml config file was found. Configure Modal or choose "
+                    "a different TERMINAL_ENV."
+                )
+                return False
+            return True
         elif env_type == "daytona":
             from daytona import Daytona
             return os.getenv("DAYTONA_API_KEY") is not None
         else:
+            logger.error(
+                "Unknown TERMINAL_ENV '%s'. Use one of: local, docker, singularity, "
+                "modal, daytona, ssh.",
+                env_type,
+            )
             return False
     except Exception as e:
-        logger.error("Terminal requirements check failed: %s", e)
+        logger.error("Terminal requirements check failed: %s", e, exc_info=True)
         return False
 
 
