@@ -347,7 +347,7 @@ source .venv/bin/activate  # Linux/macOS/WSL
 # Windows PowerShell:
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 #   .venv\Scripts\Activate.ps1
-python -m pytest tests/ -q          # Full suite (~2500 tests, ~2 min)
+python -m pytest tests/ -q          # Full suite (~3000 tests, ~3 min)
 python -m pytest tests/test_model_tools.py -q   # Toolset resolution
 python -m pytest tests/test_cli_init.py -q       # CLI config loading
 python -m pytest tests/gateway/ -q               # Gateway tests
