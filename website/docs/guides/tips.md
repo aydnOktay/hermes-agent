@@ -34,6 +34,25 @@ Before writing a long prompt explaining how to do something, check if there's al
 
 ## CLI Power User Tips
 
+### Activate the Virtual Environment First
+
+Always activate your virtual environment before running Hermes or the test suite:
+
+```bash
+source .venv/bin/activate  # Linux, macOS, WSL
+# Windows PowerShell
+#   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+#   .venv\Scripts\Activate.ps1
+# Windows cmd.exe
+#   .venv\Scripts\activate.bat
+```
+
+Once activated, you can run:
+
+```bash
+python -m pytest tests/ -q
+```
+
 ### Multi-Line Input
 
 Press **Alt+Enter** (or **Ctrl+J**) to insert a newline without sending. This lets you compose multi-line prompts, paste code blocks, or structure complex requests before hitting Enter to send.
