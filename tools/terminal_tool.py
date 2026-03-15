@@ -87,7 +87,7 @@ def _check_disk_usage_warning():
                     try:
                         total_bytes += f.stat().st_size
                     except OSError as e:
-                        logger.debug("Could not stat file %s: %s", f, e)
+                        logger.debug("Could not stat file %s: %s", f, e, exc_info=True)
         
         total_gb = total_bytes / (1024 ** 3)
         
@@ -241,12 +241,12 @@ def _prompt_for_sudo_password(timeout_seconds: int = 45) -> str:
                     import termios as _termios
                     _termios.tcsetattr(tty_fd, _termios.TCSAFLUSH, old_attrs)
                 except Exception as e:
-                    logger.debug("Failed to restore terminal attributes: %s", e)
+                    logger.debug("Failed to restore terminal attributes: %s", e, exc_info=True)
             if tty_fd is not None:
                 try:
                     os.close(tty_fd)
                 except Exception as e:
-                    logger.debug("Failed to close tty fd: %s", e)
+                    logger.debug("Failed to close tty fd: %s", e, exc_info=True)
             result["done"] = True
     
     try:
@@ -661,7 +661,7 @@ def _cleanup_inactive_envs(lifetime_seconds: int = 300):
             if "404" in error_str or "not found" in error_str.lower():
                 logger.info("Environment for task %s already cleaned up", task_id)
             else:
-                logger.warning("Error cleaning up environment for task %s: %s", task_id, e)
+                logger.warning("Error cleaning up environment for task %s: %s", task_id, e, exc_info=True)
 
 
 def _cleanup_thread_worker():
@@ -722,7 +722,7 @@ def get_active_environments_info() -> Dict[str, Any]:
                 size = sum(f.stat().st_size for f in Path(path).rglob('*') if f.is_file())
                 total_size += size
             except OSError as e:
-                logger.debug("Could not stat path %s: %s", path, e)
+                logger.debug("Could not stat path %s: %s", path, e, exc_info=True)
     
     info["total_disk_usage_mb"] = round(total_size / (1024 * 1024), 2)
     return info
@@ -750,7 +750,7 @@ def cleanup_all_environments():
             shutil.rmtree(path, ignore_errors=True)
             logger.info("Removed orphaned: %s", path)
         except OSError as e:
-            logger.debug("Failed to remove orphaned path %s: %s", path, e)
+            logger.debug("Failed to remove orphaned path %s: %s", path, e, exc_info=True)
     
     if cleaned > 0:
         logger.info("Cleaned %d environments", cleaned)
@@ -798,7 +798,7 @@ def cleanup_vm(task_id: str):
         if "404" in error_str or "not found" in error_str.lower():
             logger.info("Environment for task %s already cleaned up", task_id)
         else:
-            logger.warning("Error cleaning up environment for task %s: %s", task_id, e)
+            logger.warning("Error cleaning up environment for task %s: %s", task_id, e, exc_info=True)
 
 
 def _atexit_cleanup():
@@ -1079,12 +1079,12 @@ def terminal_tool(
                         retry_count += 1
                         wait_time = 2 ** retry_count
                         logger.warning("Execution error, retrying in %ds (attempt %d/%d) - Command: %s - Error: %s: %s - Task: %s, Backend: %s",
-                                       wait_time, retry_count, max_retries, command[:200], type(e).__name__, e, effective_task_id, env_type)
+                                       wait_time, retry_count, max_retries, command[:200], type(e).__name__, e, effective_task_id, env_type, exc_info=True)
                         time.sleep(wait_time)
                         continue
                     
                     logger.error("Execution failed after %d retries - Command: %s - Error: %s: %s - Task: %s, Backend: %s",
-                                 max_retries, command[:200], type(e).__name__, e, effective_task_id, env_type)
+                                 max_retries, command[:200], type(e).__name__, e, effective_task_id, env_type, exc_info=True)
                     return json.dumps({
                         "output": "",
                         "exit_code": -1,
@@ -1124,6 +1124,7 @@ def terminal_tool(
             }, ensure_ascii=False)
 
     except Exception as e:
+        logger.error("Failed to execute command: %s", e, exc_info=True)
         return json.dumps({
             "output": "",
             "exit_code": -1,
@@ -1151,7 +1152,7 @@ def check_terminal_requirements() -> bool:
         elif env_type == "docker":
             ensure_minisweagent_on_path(Path(__file__).resolve().parent.parent)
             if importlib.util.find_spec("minisweagent") is None:
-                logger.error("mini-swe-agent is required for docker terminal backend but is not importable")
+                logger.error("mini-swe-agent is required for docker terminal backend but is not importable", exc_info=True)
                 return False
             # Check if docker is available (use find_docker for macOS PATH issues)
             from tools.environments.docker import find_docker
