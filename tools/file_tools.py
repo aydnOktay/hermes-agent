@@ -178,6 +178,7 @@ def read_file_tool(path: str, offset: int = 1, limit: int = 500, task_id: str = 
 
         return json.dumps(result_dict, ensure_ascii=False)
     except Exception as e:
+        logger.error("read_file error: %s: %s", type(e).__name__, e, exc_info=True)
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
@@ -270,6 +271,7 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
             result_json += "\n\n[Hint: old_string not found. Use read_file to verify the current content, or search_files to locate the text.]"
         return result_json
     except Exception as e:
+        logger.error("patch error: %s: %s", type(e).__name__, e, exc_info=True)
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
@@ -328,6 +330,7 @@ def search_tool(pattern: str, target: str = "content", path: str = ".",
             result_json += f"\n\n[Hint: Results truncated. Use offset={next_offset} to see more, or narrow with a more specific pattern or file_glob.]"
         return result_json
     except Exception as e:
+        logger.error("search_files error: %s: %s", type(e).__name__, e, exc_info=True)
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
