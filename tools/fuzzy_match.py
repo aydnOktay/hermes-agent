@@ -33,6 +33,19 @@ import unicodedata
 from typing import Tuple, Optional, List, Callable
 from difflib import SequenceMatcher
 
+UNICODE_MAP = {
+    "\u201c": '"', "\u201d": '"',  # smart double quotes
+    "\u2018": "'", "\u2019": "'",  # smart single quotes
+    "\u2014": "--", "\u2013": "-", # em/en dashes
+    "\u2026": "...", "\u00a0": " ", # ellipsis and non-breaking space
+}
+
+def _unicode_normalize(text: str) -> str:
+    """Normalizes Unicode characters to their standard ASCII equivalents."""
+    for char, repl in UNICODE_MAP.items():
+        text = text.replace(char, repl)
+    return text
+
 
 def fuzzy_find_and_replace(content: str, old_string: str, new_string: str,
                             replace_all: bool = False) -> Tuple[str, int, Optional[str]]:

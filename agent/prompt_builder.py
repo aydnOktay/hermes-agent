@@ -73,9 +73,15 @@ DEFAULT_AGENT_IDENTITY = (
 MEMORY_GUIDANCE = (
     "You have persistent memory across sessions. Save durable facts using the memory "
     "tool: user preferences, environment details, tool quirks, and stable conventions. "
-    "Memory is injected into every turn, so keep it compact. Do NOT save task progress, "
-    "session outcomes, or completed-work logs to memory; use session_search to recall "
-    "those from past transcripts."
+    "Memory is injected into every turn, so keep it compact and focused on facts that "
+    "will still matter later.\n"
+    "Prioritize what reduces future user steering — the most valuable memory is one "
+    "that prevents the user from having to correct or remind you again. "
+    "User preferences and recurring corrections matter more than procedural task details.\n"
+    "Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO "
+    "state to memory; use session_search to recall those from past transcripts. "
+    "If you've discovered a new way to do something, solved a problem that could be "
+    "necessary later, save it as a skill with the skill tool."
 )
 
 SESSION_SEARCH_GUIDANCE = (
@@ -86,8 +92,11 @@ SESSION_SEARCH_GUIDANCE = (
 
 SKILLS_GUIDANCE = (
     "After completing a complex task (5+ tool calls), fixing a tricky error, "
-    "or discovering a non-trivial workflow, consider saving the approach as a "
-    "skill with skill_manage so you can reuse it next time."
+    "or discovering a non-trivial workflow, save the approach as a "
+    "skill with skill_manage so you can reuse it next time.\n"
+    "When using a skill and finding it outdated, incomplete, or wrong, "
+    "patch it immediately with skill_manage(action='patch') — don't wait to be asked. "
+    "Skills that aren't maintained become liabilities."
 )
 
 PLATFORM_HINTS = {
@@ -140,6 +149,13 @@ PLATFORM_HINTS = {
         "include MEDIA:/absolute/path/to/file in your response. The subject line "
         "is preserved for threading. Do not include greetings or sign-offs unless "
         "contextually appropriate."
+    ),
+    "cron": (
+        "You are running as a scheduled cron job. Your final response is automatically "
+        "delivered to the job's configured destination, so do not use send_message to "
+        "send to that same target again. If you want the user to receive something in "
+        "the scheduled destination, put it directly in your final response. Use "
+        "send_message only for additional or different targets."
     ),
     "cli": (
         "You are a CLI AI Agent. Try not to use markdown but simple text "
@@ -319,6 +335,9 @@ def build_skills_system_prompt(
         "Before replying, scan the skills below. If one clearly matches your task, "
         "load it with skill_view(name) and follow its instructions. "
         "If a skill has issues, fix it with skill_manage(action='patch').\n"
+        "After difficult/iterative tasks, offer to save as a skill. "
+        "If a skill you loaded was missing steps, had wrong commands, or needed "
+        "pitfalls you discovered, update it before finishing.\n"
         "\n"
         "<available_skills>\n"
         + "\n".join(index_lines) + "\n"
