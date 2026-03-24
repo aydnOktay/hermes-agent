@@ -17,6 +17,13 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+
+def _is_truthy_env(var_name: str) -> bool:
+    """Return True only for explicit truthy env values."""
+    val = os.getenv(var_name, "").strip().lower()
+    return val in ("1", "true", "yes", "on")
+
+
 # =========================================================================
 # Dangerous command patterns
 # =========================================================================
@@ -377,7 +384,7 @@ def check_dangerous_command(command: str, env_type: str,
         return {"approved": True, "message": None}
 
     # --yolo: bypass all approval prompts
-    if os.getenv("HERMES_YOLO_MODE"):
+    if _is_truthy_env("HERMES_YOLO_MODE"):
         return {"approved": True, "message": None}
 
     is_dangerous, pattern_key, description = detect_dangerous_command(command)
@@ -452,7 +459,7 @@ def check_all_command_guards(command: str, env_type: str,
 
     # --yolo or approvals.mode=off: bypass all approval prompts
     approval_mode = _get_approval_mode()
-    if os.getenv("HERMES_YOLO_MODE") or approval_mode == "off":
+    if _is_truthy_env("HERMES_YOLO_MODE") or approval_mode == "off":
         return {"approved": True, "message": None}
 
     is_cli = os.getenv("HERMES_INTERACTIVE")
