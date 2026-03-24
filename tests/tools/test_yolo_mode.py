@@ -108,3 +108,17 @@ class TestYoloMode:
         result = check_dangerous_command("rm -rf /", "local",
                                          approval_callback=lambda *a: "deny")
         assert not result["approved"]
+
+    @pytest.mark.parametrize("false_like_value", ["0", "false", "no", "off"])
+    def test_yolo_mode_false_like_values_do_not_bypass(self, monkeypatch, false_like_value):
+        """False-like string values must not enable YOLO bypass."""
+        monkeypatch.setenv("HERMES_YOLO_MODE", false_like_value)
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        monkeypatch.setenv("HERMES_SESSION_KEY", "test-session")
+
+        result = check_dangerous_command(
+            "rm -rf /",
+            "local",
+            approval_callback=lambda *a: "deny",
+        )
+        assert not result["approved"]
