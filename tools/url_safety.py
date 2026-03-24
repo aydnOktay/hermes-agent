@@ -48,13 +48,18 @@ def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
 
 
 def is_safe_url(url: str) -> bool:
-    """Return True if the URL target is not a private/internal address.
+    """Return True if the URL target is not a private/internal address and uses http/https.
 
     Resolves the hostname to an IP and checks against private ranges.
-    Fails closed: DNS errors and unexpected exceptions block the request.
+    Fails closed: DNS errors, unsupported schemes, and unexpected exceptions block the request.
     """
     try:
         parsed = urlparse(url)
+        scheme = parsed.scheme.lower()
+        if scheme not in ("http", "https"):
+            logger.warning("Blocked request to unsupported URL scheme: %s", scheme)
+            return False
+
         hostname = (parsed.hostname or "").strip().lower()
         if not hostname:
             return False
