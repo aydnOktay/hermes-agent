@@ -1318,6 +1318,24 @@ class TestCORS:
             assert resp.headers.get("Access-Control-Allow-Origin") == "http://localhost:3000"
             assert "Authorization" in resp.headers.get("Access-Control-Allow-Headers", "")
 
+    @pytest.mark.asyncio
+    async def test_cors_preflight_allows_idempotency_key_header(self):
+        """Browser clients using Idempotency-Key must pass CORS preflight."""
+        adapter = _make_adapter(cors_origins=["http://localhost:3000"])
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.options(
+                "/v1/responses",
+                headers={
+                    "Origin": "http://localhost:3000",
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "Idempotency-Key, Content-Type",
+                },
+            )
+            assert resp.status == 200
+            allow = resp.headers.get("Access-Control-Allow-Headers", "")
+            assert "Idempotency-Key" in allow
+
 
 # ---------------------------------------------------------------------------
 # Conversation parameter
