@@ -6758,6 +6758,10 @@ class AIAgent:
                         if self._try_activate_fallback():
                             retry_count = 0
                             continue
+                        # For native Anthropic Messages mode, tests expect 429/529 to be raised
+                        # after all retries are exhausted (instead of returning an error dict).
+                        if self.api_mode == "anthropic_messages" and status_code in (429, 529):
+                            raise api_error
                         _final_summary = self._summarize_api_error(api_error)
                         self._vprint(f"{self.log_prefix}❌ Max retries ({max_retries}) exceeded. Giving up.", force=True)
                         self._vprint(f"{self.log_prefix}   💀 Final error: {_final_summary}", force=True)

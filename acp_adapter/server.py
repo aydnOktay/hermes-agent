@@ -12,7 +12,6 @@ import acp
 from acp.schema import (
     AgentCapabilities,
     AuthenticateResponse,
-    AuthMethod,
     ClientCapabilities,
     EmbeddedResourceContentBlock,
     ForkSessionResponse,
@@ -33,6 +32,12 @@ from acp.schema import (
     TextContentBlock,
     Usage,
 )
+
+# NOTE: AuthMethod is not present in some acp versions.
+try:
+    from acp.schema import AuthMethod
+except ImportError:  # pragma: no cover
+    AuthMethod = None  # type: ignore[assignment]
 
 from acp_adapter.auth import detect_provider, has_provider
 from acp_adapter.events import (
@@ -102,13 +107,16 @@ class HermesACPAgent(acp.Agent):
         provider = detect_provider()
         auth_methods = None
         if provider:
-            auth_methods = [
-                AuthMethod(
-                    id=provider,
-                    name=f"{provider} runtime credentials",
-                    description=f"Authenticate Hermes using the currently configured {provider} runtime credentials.",
-                )
-            ]
+            if AuthMethod is not None:
+                auth_methods = [
+                    AuthMethod(
+                        id=provider,
+                        name=f"{provider} runtime credentials",
+                        description=f"Authenticate Hermes using the currently configured {provider} runtime credentials.",
+                    )
+                ]
+            else:
+                auth_methods = None
 
         client_name = client_info.name if client_info else "unknown"
         logger.info("Initialize from %s (protocol v%s)", client_name, protocol_version)
