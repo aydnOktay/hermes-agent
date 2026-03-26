@@ -1320,6 +1320,22 @@ class TestCORS:
 
 
 # ---------------------------------------------------------------------------
+# Security headers
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityHeaders:
+    @pytest.mark.asyncio
+    async def test_x_content_type_options_nosniff_is_set(self):
+        adapter = _make_adapter(cors_origins=["http://localhost:3000"])
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.get("/health", headers={"Origin": "http://localhost:3000"})
+            assert resp.status == 200
+            assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+
+
+# ---------------------------------------------------------------------------
 # Conversation parameter
 # ---------------------------------------------------------------------------
 
