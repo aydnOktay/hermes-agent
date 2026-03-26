@@ -53,6 +53,29 @@ def check_api_server_requirements() -> bool:
     return AIOHTTP_AVAILABLE
 
 
+def _parse_boolish(value: Any) -> Optional[bool]:
+    """
+    Parse a JSON value into a boolean.
+
+    Accepts real booleans and common bool-ish strings:
+    - truthy: "1", "true", "yes", "on"
+    - falsy: "0", "false", "no", "off"
+
+    Returns None for unsupported values (handlers can then return 400).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return True
+        if v in ("0", "false", "no", "off"):
+            return False
+    return None
+
+
 class ResponseStore:
     """
     SQLite-backed LRU store for Responses API state.
@@ -660,7 +683,13 @@ class APIServerAdapter(BasePlatformAdapter):
         instructions = body.get("instructions")
         previous_response_id = body.get("previous_response_id")
         conversation = body.get("conversation")
-        store = body.get("store", True)
+        store_raw = body.get("store", True)
+        store = _parse_boolish(store_raw)
+        if store is None:
+            return web.json_response(
+                _openai_error("Invalid 'store' field"),
+                status=400,
+            )
 
         # conversation and previous_response_id are mutually exclusive
         if conversation and previous_response_id:
