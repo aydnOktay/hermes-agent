@@ -222,6 +222,25 @@ if AIOHTTP_AVAILABLE:
         return await handler(request)
 else:
     body_limit_middleware = None  # type: ignore[assignment]
+_SECURITY_HEADERS = {
+    # Prevent MIME sniffing
+    "X-Content-Type-Options": "nosniff",
+    # Avoid leaking referrer information if the API is accessed via a browser context.
+    "Referrer-Policy": "no-referrer",
+}
+
+
+if AIOHTTP_AVAILABLE:
+    @web.middleware
+    async def security_headers_middleware(request, handler):
+        """Add security headers to all responses (including errors)."""
+        response = await handler(request)
+        for k, v in _SECURITY_HEADERS.items():
+            response.headers.setdefault(k, v)
+        return response
+else:
+    security_headers_middleware = None  # type: ignore[assignment]
+
 
 
 class _IdempotencyCache:
@@ -1183,7 +1202,7 @@ class APIServerAdapter(BasePlatformAdapter):
             return False
 
         try:
-            mws = [mw for mw in (cors_middleware, body_limit_middleware) if mw is not None]
+            mws = [mw for mw in (cors_middleware, body_limit_middleware, security_headers_middleware) if mw is not None]
             self._app = web.Application(middlewares=mws)
             self._app["api_server_adapter"] = self
             self._app.router.add_get("/health", self._handle_health)
