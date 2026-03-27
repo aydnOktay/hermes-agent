@@ -166,7 +166,8 @@ class ResponseStore:
 
 _CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    # Include Idempotency-Key so browser clients can use request deduplication safely.
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key",
 }
 
 
@@ -185,10 +186,14 @@ if AIOHTTP_AVAILABLE:
         if request.method == "OPTIONS":
             if cors_headers is None:
                 return web.Response(status=403)
+            # Ensure downstream caches do not serve one origin's CORS response to another.
+            cors_headers.setdefault("Vary", "Origin")
             return web.Response(status=200, headers=cors_headers)
 
         response = await handler(request)
         if cors_headers is not None:
+            # Ensure downstream caches do not serve one origin's CORS response to another.
+            cors_headers.setdefault("Vary", "Origin")
             response.headers.update(cors_headers)
         return response
 else:
