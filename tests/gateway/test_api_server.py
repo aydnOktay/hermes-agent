@@ -1328,6 +1328,7 @@ class TestCORS:
             assert resp.status == 200
             assert resp.headers.get("Vary") == "Origin"
 
+    @pytest.mark.asyncio
     async def test_cors_options_preflight_allowed_for_configured_origin(self):
         """Configured origins can complete browser preflight."""
         adapter = _make_adapter(cors_origins=["http://localhost:3000"])
