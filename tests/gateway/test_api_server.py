@@ -1319,6 +1319,15 @@ class TestCORS:
             assert "Authorization" in resp.headers.get("Access-Control-Allow-Headers", "")
 
 
+    @pytest.mark.asyncio
+    async def test_health_v1_alias(self):
+        adapter = _make_adapter()
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.get("/v1/health")
+            assert resp.status == 200
+            data = await resp.json()
+            assert data.get("status") == "ok"
 # ---------------------------------------------------------------------------
 # Conversation parameter
 # ---------------------------------------------------------------------------
