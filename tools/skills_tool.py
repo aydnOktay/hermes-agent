@@ -827,8 +827,7 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                     "available_skills": available,
                     "hint": "Use skills_list to see all available skills",
                 },
-                ensure_ascii=False,
-        # Category gate: red-teaming/jailbreaking skills require explicit opt-in
+                ensure_ascii=False)\n\n        # Category gate: red-teaming/jailbreaking skills require explicit opt-in
         try:
             category_for_gate = _get_category_from_path(skill_md)
         except Exception:
@@ -839,11 +838,7 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
         except Exception:
             _gate = False
         if (category_for_gate in {"red-teaming", "red_team", "jailbreaking"}) and not _gate:
-            return json.dumps({"success": False, "error": "This skill category is disabled. Set HERMES_ENABLE_RED_TEAM_SKILLS=true to enable."}, ensure_ascii=False)
-
-            )
-
-        # Read the file once — reused for platform check and main content below
+            return json.dumps({"success": False, "error": "This skill category is disabled. Set HERMES_ENABLE_RED_TEAM_SKILLS=true to enable."}, ensure_ascii=False)\n\n        # Read the file once — reused for platform check and main content below
         try:
             content = skill_md.read_text(encoding="utf-8")
         except Exception as e:
