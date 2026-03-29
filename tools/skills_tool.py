@@ -828,7 +828,20 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                     "hint": "Use skills_list to see all available skills",
                 },
                 ensure_ascii=False,
-            )
+        # Category gate: red-teaming/jailbreaking skills require explicit opt-in
+        try:
+            category_for_gate = _get_category_from_path(skill_md)
+        except Exception:
+            category_for_gate = None
+        try:
+            import os as _os
+            _gate = _os.getenv("HERMES_ENABLE_RED_TEAM_SKILLS", "false").strip().lower() in ("1", "true", "yes")
+        except Exception:
+            _gate = False
+        if (category_for_gate in {"red-teaming", "red_team", "jailbreaking"}) and not _gate:
+            return json.dumps({"success": False, "error": "This skill category is disabled. Set HERMES_ENABLE_RED_TEAM_SKILLS=true to enable."}, ensure_ascii=False)
+
+                    )
 
         # Read the file once — reused for platform check and main content below
         try:
