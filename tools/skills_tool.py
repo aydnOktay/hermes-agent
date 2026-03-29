@@ -1214,14 +1214,6 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
             if setup_note:
                 result["setup_note"] = setup_note
 
-        else:
-            if required_env_vars and backend in _REMOTE_ENV_BACKENDS:
-                result["setup_note"] = (
-                    f"{backend.upper()}-backed skills need these requirements available inside the remote environment as well."
-                )
-
-        
-
         # Surface agentskills.io optional fields when present
         if frontmatter.get("compatibility"):
             result["compatibility"] = frontmatter["compatibility"]
