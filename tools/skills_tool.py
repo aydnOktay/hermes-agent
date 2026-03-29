@@ -817,8 +817,7 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                         break
                 if skill_md:
                     break
-
-                if not skill_md or not skill_md.exists():
+        if not skill_md or not skill_md.exists():
             available = [s["name"] for s in _find_all_skills()[:20]]
             return json.dumps(
                 {
@@ -843,7 +842,7 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
         if (category_for_gate in {"red-teaming", "red_team", "jailbreaking"}) and not _gate:
             return json.dumps({"success": False, "error": "This skill category is disabled. Set HERMES_ENABLE_RED_TEAM_SKILLS=true to enable."}, ensure_ascii=False)
 
-# Read the file once — reused for platform check and main content below
+        # Read the file once — reused for platform check and main content below
         try:
             content = skill_md.read_text(encoding="utf-8")
         except Exception as e:
