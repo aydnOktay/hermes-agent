@@ -96,7 +96,16 @@ class SlackAdapter(BasePlatformAdapter):
             self._app = AsyncApp(token=bot_token)
 
             # Get our own bot user ID for mention detection
-            auth_response = await self._app.client.auth_test()
+            # `auth_test()` may be an awaitable coroutine or a sync method
+            # depending on slack-bolt version and test mocks. Handle both.
+            auth_test_fn = getattr(self._app.client, "auth_test", None)
+            auth_response = {}
+            if callable(auth_test_fn):
+                maybe_result = auth_test_fn()
+                if asyncio.iscoroutine(maybe_result):
+                    auth_response = await maybe_result
+                else:
+                    auth_response = maybe_result or {}
             self._bot_user_id = auth_response.get("user_id")
             bot_name = auth_response.get("user", "unknown")
 

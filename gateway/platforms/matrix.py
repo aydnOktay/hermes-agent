@@ -840,19 +840,33 @@ class MatrixAdapter(BasePlatformAdapter):
                 logger.warning("[Matrix] Failed to cache image: %s", e)
         elif msg_type == MessageType.AUDIO and url:
             try:
-                ext_map = {
-                    "audio/ogg": ".ogg",
-                    "audio/mp3": ".mp3",
-                    "audio/mpeg": ".mp3",
-                    "audio/wav": ".wav",
-                    "audio/x-wav": ".wav",
-                }
-                ext = ext_map.get(event_mimetype, ".ogg")
-                download_resp = await self._client.download(url)
-                if isinstance(download_resp, nio.DownloadResponse):
-                    from gateway.platforms.base import cache_audio_from_bytes
-                    cached_path = cache_audio_from_bytes(download_resp.body, ext=ext)
-                    logger.info("[Matrix] Cached user voice/audio at %s", cached_path)
+                mimetype_lower = (event_mimetype or "").lower()
+                body_lower = (body or "").lower()
+
+                # Matrix voice notes are typically sent as Opus in OGG containers.
+                # Regular audio attachments should keep the HTTP URL so they are
+                # handled differently downstream (tests expect this split).
+                is_voice_note = (
+                    "opus" in mimetype_lower
+                    or "codecs=opus" in mimetype_lower
+                    or "ptt" in body_lower
+                    or "voice" in body_lower
+                )
+
+                if is_voice_note:
+                    if "wav" in mimetype_lower:
+                        ext = ".wav"
+                    elif "mp3" in mimetype_lower or "mpeg" in mimetype_lower:
+                        ext = ".mp3"
+                    else:
+                        ext = ".ogg"
+
+                    download_resp = await self._client.download(url)
+                    if isinstance(download_resp, nio.DownloadResponse):
+                        from gateway.platforms.base import cache_audio_from_bytes
+
+                        cached_path = cache_audio_from_bytes(download_resp.body, ext=ext)
+                        logger.info("[Matrix] Cached user voice note at %s", cached_path)
             except Exception as e:
                 logger.warning("[Matrix] Failed to cache audio: %s", e)
 
