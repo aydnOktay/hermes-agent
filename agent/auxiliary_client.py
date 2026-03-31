@@ -704,16 +704,24 @@ def _resolve_custom_runtime() -> Tuple[Optional[str], Optional[str]]:
     endpoints where the base URL lives in config.yaml instead of the live
     environment.
     """
+    custom_base: Optional[str] = None
+    custom_key: Optional[str] = None
     try:
         from hermes_cli.runtime_provider import resolve_runtime_provider
 
         runtime = resolve_runtime_provider(requested="custom")
+        custom_base = runtime.get("base_url")
+        custom_key = runtime.get("api_key")
     except Exception as exc:
         logger.debug("Auxiliary client: custom runtime resolution failed: %s", exc)
-        return None, None
 
-    custom_base = runtime.get("base_url")
-    custom_key = runtime.get("api_key")
+    # Keep env fallback for test/CI and lightweight local setups where
+    # runtime_provider may not expose custom config.
+    if not isinstance(custom_base, str) or not custom_base.strip():
+        custom_base = os.getenv("OPENAI_BASE_URL", "")
+    if not isinstance(custom_key, str) or not custom_key.strip():
+        custom_key = os.getenv("OPENAI_API_KEY", "")
+
     if not isinstance(custom_base, str) or not custom_base.strip():
         return None, None
 

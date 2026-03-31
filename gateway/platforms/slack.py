@@ -149,9 +149,13 @@ class SlackAdapter(BasePlatformAdapter):
                 if callable(auth_test_fn):
                     maybe_result = auth_test_fn()
                     if inspect.isawaitable(maybe_result):
-                        auth_response = await maybe_result
+                        resolved = await maybe_result
                     else:
-                        auth_response = maybe_result or {}
+                        resolved = maybe_result
+                    if isinstance(resolved, dict):
+                        auth_response = resolved
+                    elif hasattr(resolved, "data") and isinstance(getattr(resolved, "data"), dict):
+                        auth_response = getattr(resolved, "data")
 
                 team_id = auth_response.get("team_id", "")
                 bot_user_id = auth_response.get("user_id", "")
