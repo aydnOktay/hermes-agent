@@ -725,9 +725,13 @@ def _resolve_custom_runtime() -> Tuple[Optional[str], Optional[str]]:
 
     custom_base = custom_base.strip().rstrip("/")
     if "openrouter.ai" in custom_base.lower():
-        # requested='custom' falls back to OpenRouter when no custom endpoint is
-        # configured. Treat that as "no custom endpoint" for auxiliary routing.
-        return None, None
+        # runtime_provider may return OpenRouter fallback even when an explicit
+        # OPENAI_BASE_URL custom endpoint is set in env (common in tests/CI).
+        env_base = (os.getenv("OPENAI_BASE_URL", "") or "").strip().rstrip("/")
+        if env_base and "openrouter.ai" not in env_base.lower():
+            custom_base = env_base
+        else:
+            return None, None
 
     # Local/custom OpenAI-compatible endpoints may not require auth.
     if not isinstance(custom_key, str) or not custom_key.strip():
