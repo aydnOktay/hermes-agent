@@ -380,6 +380,7 @@ class APIServerAdapter(BasePlatformAdapter):
         ephemeral_system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
         stream_delta_callback=None,
+        tool_progress_callback=None,
     ) -> Any:
         """
         Create an AIAgent instance using the gateway's runtime config.
@@ -412,6 +413,7 @@ class APIServerAdapter(BasePlatformAdapter):
             session_id=session_id,
             platform="api_server",
             stream_delta_callback=stream_delta_callback,
+            tool_progress_callback=tool_progress_callback,
         )
         return agent
 
@@ -514,6 +516,15 @@ class APIServerAdapter(BasePlatformAdapter):
                 if delta is not None:
                     _stream_q.put(delta)
 
+            def _on_tool_progress(name, preview, args):
+                """Inject tool progress into the SSE stream for Open WebUI."""
+                if name.startswith("_"):
+                    return  # Skip internal events (_thinking)
+                from agent.display import get_tool_emoji
+                emoji = get_tool_emoji(name)
+                label = preview or name
+                _stream_q.put(f"\n`{emoji} {label}`\n")
+
             # Start agent in background.  agent_ref is a mutable container
             # so the SSE writer can interrupt the agent on client disconnect.
             agent_ref = [None]
@@ -523,6 +534,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
                 stream_delta_callback=_on_delta,
+                tool_progress_callback=_on_tool_progress,
                 agent_ref=agent_ref,
             ))
 
@@ -1194,6 +1206,7 @@ class APIServerAdapter(BasePlatformAdapter):
         ephemeral_system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
         stream_delta_callback=None,
+        tool_progress_callback=None,
         agent_ref: Optional[list] = None,
     ) -> tuple:
         """
@@ -1214,6 +1227,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 ephemeral_system_prompt=ephemeral_system_prompt,
                 session_id=session_id,
                 stream_delta_callback=stream_delta_callback,
+                tool_progress_callback=tool_progress_callback,
             )
             if agent_ref is not None:
                 agent_ref[0] = agent
@@ -1260,6 +1274,17 @@ class APIServerAdapter(BasePlatformAdapter):
             self._app.router.add_post("/api/jobs/{job_id}/pause", self._handle_pause_job)
             self._app.router.add_post("/api/jobs/{job_id}/resume", self._handle_resume_job)
             self._app.router.add_post("/api/jobs/{job_id}/run", self._handle_run_job)
+
+            # Port conflict detection — fail fast if port is already in use
+            import socket as _socket
+            try:
+                with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as _s:
+                    _s.settimeout(1)
+                    _s.connect(('127.0.0.1', self._port))
+                logger.error('[%s] Port %d already in use. Set a different port in config.yaml: platforms.api_server.port', self.name, self._port)
+                return False
+            except (ConnectionRefusedError, OSError):
+                pass  # port is free
 
             self._runner = web.AppRunner(self._app)
             await self._runner.setup()

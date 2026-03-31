@@ -486,6 +486,17 @@ class DiscordAdapter(BasePlatformAdapter):
             return False
         
         try:
+            # Acquire scoped lock to prevent duplicate bot token usage
+            from gateway.status import acquire_scoped_lock
+            self._token_lock_identity = self.config.token
+            acquired, existing = acquire_scoped_lock('discord-bot-token', self._token_lock_identity, metadata={'platform': 'discord'})
+            if not acquired:
+                owner_pid = existing.get('pid') if isinstance(existing, dict) else None
+                message = f'Discord bot token already in use' + (f' (PID {owner_pid})' if owner_pid else '') + '. Stop the other gateway first.'
+                logger.error('[%s] %s', self.name, message)
+                self._set_fatal_error('discord_token_lock', message, retryable=False)
+                return False
+
             # Set up intents -- members intent needed for username-to-ID resolution
             intents = Intents.default()
             intents.message_content = True
@@ -638,7 +649,60 @@ class DiscordAdapter(BasePlatformAdapter):
         self._running = False
         self._client = None
         self._ready_event.clear()
+
+        # Release the token lock
+        try:
+            from gateway.status import release_scoped_lock
+            if getattr(self, '_token_lock_identity', None):
+                release_scoped_lock('discord-bot-token', self._token_lock_identity)
+                self._token_lock_identity = None
+        except Exception:
+            pass
+
         logger.info("[%s] Disconnected", self.name)
+
+    async def _add_reaction(self, message: Any, emoji: str) -> bool:
+        """Add an emoji reaction to a Discord message."""
+        if not message or not hasattr(message, "add_reaction"):
+            return False
+        try:
+            await message.add_reaction(emoji)
+            return True
+        except Exception as e:
+            logger.debug("[%s] add_reaction failed (%s): %s", self.name, emoji, e)
+            return False
+
+    async def _remove_reaction(self, message: Any, emoji: str) -> bool:
+        """Remove the bot's own emoji reaction from a Discord message."""
+        if not message or not hasattr(message, "remove_reaction") or not self._client or not self._client.user:
+            return False
+        try:
+            await message.remove_reaction(emoji, self._client.user)
+            return True
+        except Exception as e:
+            logger.debug("[%s] remove_reaction failed (%s): %s", self.name, emoji, e)
+            return False
+
+    def _reactions_enabled(self) -> bool:
+        """Check if message reactions are enabled via config/env."""
+        return os.getenv("DISCORD_REACTIONS", "true").lower() not in ("false", "0", "no")
+
+    async def on_processing_start(self, event: MessageEvent) -> None:
+        """Add an in-progress reaction for normal Discord message events."""
+        if not self._reactions_enabled():
+            return
+        message = event.raw_message
+        if hasattr(message, "add_reaction"):
+            await self._add_reaction(message, "👀")
+
+    async def on_processing_complete(self, event: MessageEvent, success: bool) -> None:
+        """Swap the in-progress reaction for a final success/failure reaction."""
+        if not self._reactions_enabled():
+            return
+        message = event.raw_message
+        if hasattr(message, "add_reaction"):
+            await self._remove_reaction(message, "👀")
+            await self._add_reaction(message, "✅" if success else "❌")
     
     async def send(
         self,
