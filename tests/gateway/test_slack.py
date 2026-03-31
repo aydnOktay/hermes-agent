@@ -136,6 +136,47 @@ class TestAppMentionHandler:
         assert "app_mention" in registered_events
         assert "/hermes" in registered_commands
 
+    def test_connect_handles_sync_auth_test_mock(self):
+        """connect() should tolerate auth_test mocked as a sync method."""
+        config = PlatformConfig(enabled=True, token="xoxb-fake")
+        adapter = SlackAdapter(config)
+
+        registered_events = []
+        registered_commands = []
+
+        mock_app = MagicMock()
+
+        def mock_event(event_type):
+            def decorator(fn):
+                registered_events.append(event_type)
+                return fn
+            return decorator
+
+        def mock_command(cmd):
+            def decorator(fn):
+                registered_commands.append(cmd)
+                return fn
+            return decorator
+
+        mock_app.event = mock_event
+        mock_app.command = mock_command
+        mock_app.client = MagicMock()
+        mock_app.client.auth_test = MagicMock(return_value={
+            "user_id": "U_BOT_SYNC",
+            "user": "testbot-sync",
+        })
+
+        with patch.object(_slack_mod, "AsyncApp", return_value=mock_app), \
+             patch.object(_slack_mod, "AsyncSocketModeHandler", return_value=MagicMock()), \
+             patch.dict(os.environ, {"SLACK_APP_TOKEN": "xapp-fake"}), \
+             patch("asyncio.create_task"):
+            assert asyncio.run(adapter.connect()) is True
+
+        assert adapter._bot_user_id == "U_BOT_SYNC"
+        assert "message" in registered_events
+        assert "app_mention" in registered_events
+        assert "/hermes" in registered_commands
+
 
 # ---------------------------------------------------------------------------
 # TestSendDocument
