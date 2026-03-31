@@ -727,9 +727,17 @@ def _resolve_custom_runtime() -> Tuple[Optional[str], Optional[str]]:
 
     custom_base = custom_base.strip().rstrip("/")
     if "openrouter.ai" in custom_base.lower():
-        # requested='custom' falls back to OpenRouter when no custom endpoint is
-        # configured. Treat that as "no custom endpoint" for auxiliary routing.
-        return None, None
+        # If runtime-provider resolved to OpenRouter fallback, prefer explicit
+        # env-based custom endpoint when present (common in tests/CI).
+        env_base = (os.getenv("OPENAI_BASE_URL", "") or "").strip().rstrip("/")
+        if env_base and "openrouter.ai" not in env_base.lower():
+            custom_base = env_base
+            if not isinstance(custom_key, str) or not custom_key.strip():
+                custom_key = os.getenv("OPENAI_API_KEY", "")
+        else:
+            # requested='custom' fell back to OpenRouter and no explicit custom
+            # endpoint is available.
+            return None, None
 
     # Local servers (Ollama, llama.cpp, vLLM, LM Studio) don't require auth.
     # Use a placeholder key — the OpenAI SDK requires a non-empty string but

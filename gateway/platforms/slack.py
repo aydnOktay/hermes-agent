@@ -141,21 +141,29 @@ class SlackAdapter(BasePlatformAdapter):
             primary_token = bot_tokens[0]
             self._app = AsyncApp(token=primary_token)
 
+            async def _resolve_auth_response(auth_client) -> Dict[str, Any]:
+                auth_test_fn = getattr(auth_client, "auth_test", None)
+                if not callable(auth_test_fn):
+                    return {}
+                maybe_result = auth_test_fn()
+                resolved = await maybe_result if inspect.isawaitable(maybe_result) else maybe_result
+                if isinstance(resolved, dict):
+                    return resolved
+                data = getattr(resolved, "data", None)
+                if isinstance(data, dict):
+                    return data
+                return {}
+
+            # Seed bot identity from the primary app client for compatibility
+            # with tests/mocks that only patch AsyncApp.client.auth_test().
+            primary_auth = await _resolve_auth_response(self._app.client)
+            if isinstance(primary_auth, dict):
+                self._bot_user_id = primary_auth.get("user_id") or self._bot_user_id
+
             # Register each bot token and map team_id → client.
             for token in bot_tokens:
                 client = AsyncWebClient(token=token)
-                auth_test_fn = getattr(client, "auth_test", None)
-                auth_response = {}
-                if callable(auth_test_fn):
-                    maybe_result = auth_test_fn()
-                    if inspect.isawaitable(maybe_result):
-                        resolved = await maybe_result
-                    else:
-                        resolved = maybe_result
-                    if isinstance(resolved, dict):
-                        auth_response = resolved
-                    elif hasattr(resolved, "data") and isinstance(getattr(resolved, "data"), dict):
-                        auth_response = getattr(resolved, "data")
+                auth_response = await _resolve_auth_response(client)
 
                 team_id = auth_response.get("team_id", "")
                 bot_user_id = auth_response.get("user_id", "")
