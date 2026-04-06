@@ -2019,12 +2019,14 @@ class GatewayRunner:
         # in hermes_cli/commands.py — no hardcoded set to maintain here.
         from hermes_cli.commands import GATEWAY_KNOWN_COMMANDS, resolve_command as _resolve_cmd
         if command and command in GATEWAY_KNOWN_COMMANDS:
-            await self.hooks.emit(f"command:{command}", {
-                "platform": source.platform.value if source.platform else "",
-                "user_id": source.user_id,
-                "command": command,
-                "args": event.get_command_args().strip(),
-            })
+            hooks = getattr(self, "hooks", None)
+            if hooks is not None:
+                await hooks.emit(f"command:{command}", {
+                    "platform": source.platform.value if source.platform else "",
+                    "user_id": source.user_id,
+                    "command": command,
+                    "args": event.get_command_args().strip(),
+                })
 
         # Resolve aliases to canonical name so dispatch only checks canonicals.
         _cmd_def = _resolve_cmd(command) if command else None

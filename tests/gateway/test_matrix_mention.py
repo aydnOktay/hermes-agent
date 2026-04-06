@@ -3,6 +3,7 @@
 import json
 import sys
 import time
+import types
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,17 +16,55 @@ def _ensure_nio_mock():
     """Install a mock nio module when matrix-nio isn't available."""
     if "nio" in sys.modules and hasattr(sys.modules["nio"], "__file__"):
         return
-    nio_mod = MagicMock()
-    nio_mod.MegolmEvent = type("MegolmEvent", (), {})
-    nio_mod.RoomMessageText = type("RoomMessageText", (), {})
-    nio_mod.RoomMessageImage = type("RoomMessageImage", (), {})
-    nio_mod.RoomMessageAudio = type("RoomMessageAudio", (), {})
-    nio_mod.RoomMessageVideo = type("RoomMessageVideo", (), {})
-    nio_mod.RoomMessageFile = type("RoomMessageFile", (), {})
-    nio_mod.DownloadResponse = type("DownloadResponse", (), {})
-    nio_mod.MemoryDownloadResponse = type("MemoryDownloadResponse", (), {})
-    nio_mod.InviteMemberEvent = type("InviteMemberEvent", (), {})
+    nio_mod = types.ModuleType("nio")
+    nio_mod.__file__ = "<nio-mock>"
+    for cls_name in (
+        "MegolmEvent",
+        "RoomMessageText",
+        "RoomMessageImage",
+        "RoomMessageAudio",
+        "RoomMessageVideo",
+        "RoomMessageFile",
+        "RoomEncryptedImage",
+        "RoomEncryptedAudio",
+        "RoomEncryptedVideo",
+        "RoomEncryptedFile",
+        "DownloadResponse",
+        "MemoryDownloadResponse",
+        "InviteMemberEvent",
+        "WhoamiResponse",
+        "SyncResponse",
+        "LoginResponse",
+        "SyncError",
+        "RoomSendResponse",
+        "RoomRedactResponse",
+        "RoomCreateResponse",
+        "RoomInviteResponse",
+        "UploadResponse",
+    ):
+        setattr(nio_mod, cls_name, type(cls_name, (), {}))
+
+    # Minimal crypto attachments shim used by encrypted media tests.
+    crypto_mod = types.ModuleType("nio.crypto")
+    attachments_mod = types.ModuleType("nio.crypto.attachments")
+
+    def encrypt_attachment(data: bytes):
+        return data, {
+            "key": {"kty": "oct", "k": "ZmFrZS1rZXk", "alg": "A256CTR", "key_ops": ["encrypt", "decrypt"]},
+            "hashes": {"sha256": "ZmFrZS1oYXNo"},
+            "iv": "ZmFrZS1pdg",
+        }
+
+    def decrypt_attachment(data: bytes, *_args, **_kwargs):
+        return data
+
+    attachments_mod.encrypt_attachment = encrypt_attachment
+    attachments_mod.decrypt_attachment = decrypt_attachment
+    crypto_mod.attachments = attachments_mod
+
     sys.modules.setdefault("nio", nio_mod)
+    sys.modules.setdefault("nio.crypto", crypto_mod)
+    sys.modules.setdefault("nio.crypto.attachments", attachments_mod)
 
 
 _ensure_nio_mock()

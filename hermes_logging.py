@@ -109,6 +109,7 @@ def setup_logging(
     from agent.redact import RedactingFormatter
 
     root = logging.getLogger()
+    _remove_existing_hermes_file_handlers(root)
 
     # --- agent.log (INFO+) — the main activity log -------------------------
     _add_rotating_handler(
@@ -204,7 +205,28 @@ def _add_rotating_handler(
     )
     handler.setLevel(level)
     handler.setFormatter(formatter)
+    handler._hermes_managed = True  # type: ignore[attr-defined]
     logger.addHandler(handler)
+
+
+def _remove_existing_hermes_file_handlers(root: logging.Logger) -> None:
+    """Remove existing Hermes file handlers so setup in tests stays isolated.
+
+    Tests frequently reconfigure logging with per-test HERMES_HOME paths; if a
+    previous global setup added handlers for another path, those stale handlers
+    cause duplicate-file assertions to fail.
+    """
+    for handler in list(root.handlers):
+        if not isinstance(handler, RotatingFileHandler):
+            continue
+        base = Path(getattr(handler, "baseFilename", ""))
+        if base.name not in {"agent.log", "errors.log"}:
+            continue
+        root.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
 
 
 def _read_logging_config():
