@@ -1518,15 +1518,14 @@ class MatrixAdapter(BasePlatformAdapter):
         if not self._client:
             return None
         try:
+            api_cls = getattr(nio, "Api", None)
+            room_preset_enum = getattr(api_cls, "RoomPreset", None) if api_cls is not None else None
             resp = await self._client.room_create(
                 name=name or None,
                 topic=topic or None,
                 invite=invite or [],
                 is_direct=is_direct,
-                preset=getattr(
-                    nio.Api.RoomPreset if hasattr(nio.Api, "RoomPreset") else type("", (), {}),
-                    preset, None,
-                ) or preset,
+                preset=getattr(room_preset_enum, preset, None) or preset,
             )
             if isinstance(resp, nio.RoomCreateResponse):
                 room_id = resp.room_id

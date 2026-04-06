@@ -41,8 +41,12 @@ def _ensure_nio_mock():
         "RoomCreateResponse",
         "RoomInviteResponse",
         "UploadResponse",
+        "DownloadError",
     ):
         setattr(nio_mod, cls_name, type(cls_name, (), {}))
+
+    # Matrix create_room references nio.Api.RoomPreset when available.
+    nio_mod.Api = type("Api", (), {"RoomPreset": type("RoomPreset", (), {})})
 
     # Minimal crypto attachments shim used by encrypted media tests.
     crypto_mod = types.ModuleType("nio.crypto")
@@ -55,7 +59,13 @@ def _ensure_nio_mock():
             "iv": "ZmFrZS1pdg",
         }
 
-    def decrypt_attachment(data: bytes, *_args, **_kwargs):
+    def decrypt_attachment(data: bytes, key, hashes, iv, *_args, **_kwargs):
+        # Fail closed for obviously broken fixtures so encrypted-media
+        # tests can exercise fallback paths.
+        if iv == "broken" or hashes == {"sha256": "broken"}:
+            raise ValueError("invalid encrypted payload")
+        if isinstance(key, dict) and key.get("k") == "broken":
+            raise ValueError("invalid key")
         return data
 
     attachments_mod.encrypt_attachment = encrypt_attachment
