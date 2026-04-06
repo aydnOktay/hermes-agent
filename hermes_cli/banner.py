@@ -183,6 +183,7 @@ def check_for_updates() -> Optional[int]:
 
     # Write cache
     try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
         cache_file.write_text(json.dumps({"ts": now, "behind": behind}))
     except Exception:
         pass
