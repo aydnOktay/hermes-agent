@@ -23,9 +23,9 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 from utils import atomic_json_write
 
@@ -153,6 +153,7 @@ PROVIDER_TO_MODELS_DEV: Dict[str, str] = {
     "minimax-cn": "minimax-cn",
     "deepseek": "deepseek",
     "alibaba": "alibaba",
+    "qwen-oauth": "alibaba",
     "copilot": "github-copilot",
     "ai-gateway": "vercel",
     "opencode-zen": "opencode",
@@ -160,6 +161,7 @@ PROVIDER_TO_MODELS_DEV: Dict[str, str] = {
     "kilocode": "kilo",
     "fireworks": "fireworks-ai",
     "huggingface": "huggingface",
+    "gemini": "google",
     "google": "google",
     "xai": "xai",
     "nvidia": "nvidia",
@@ -184,9 +186,8 @@ def _get_reverse_mapping() -> Dict[str, str]:
 
 def _get_cache_path() -> Path:
     """Return path to disk cache file."""
-    env_val = os.environ.get("HERMES_HOME", "")
-    hermes_home = Path(env_val) if env_val else Path.home() / ".hermes"
-    return hermes_home / "models_dev_cache.json"
+    from hermes_constants import get_hermes_home
+    return get_hermes_home() / "models_dev_cache.json"
 
 
 def _load_disk_cache() -> Dict[str, Any]:
@@ -230,7 +231,7 @@ def fetch_models_dev(force_refresh: bool = False) -> Dict[str, Any]:
         response = requests.get(MODELS_DEV_URL, timeout=15)
         response.raise_for_status()
         data = response.json()
-        if isinstance(data, dict) and len(data) > 0:
+        if isinstance(data, dict) and data:
             _models_dev_cache = data
             _models_dev_cache_time = time.time()
             _save_disk_cache(data)
@@ -420,6 +421,39 @@ def list_provider_models(provider: str) -> List[str]:
     if models is None:
         return []
     return list(models.keys())
+
+
+# Patterns that indicate non-agentic or noise models (TTS, embedding,
+# dated preview snapshots, live/streaming-only, image-only).
+import re
+_NOISE_PATTERNS: re.Pattern = re.compile(
+    r"-tts\b|embedding|live-|-(preview|exp)-\d{2,4}[-_]|"
+    r"-image\b|-image-preview\b|-customtools\b",
+    re.IGNORECASE,
+)
+
+
+def list_agentic_models(provider: str) -> List[str]:
+    """Return model IDs suitable for agentic use from models.dev.
+
+    Filters for tool_call=True and excludes noise (TTS, embedding,
+    dated preview snapshots, live/streaming, image-only models).
+    Returns an empty list on any failure.
+    """
+    models = _get_provider_models(provider)
+    if models is None:
+        return []
+
+    result = []
+    for mid, entry in models.items():
+        if not isinstance(entry, dict):
+            continue
+        if not entry.get("tool_call", False):
+            continue
+        if _NOISE_PATTERNS.search(mid):
+            continue
+        result.append(mid)
+    return result
 
 
 def search_models_dev(

@@ -267,6 +267,34 @@ def _profile_suffix() -> str:
     return hashlib.sha256(str(home).encode()).hexdigest()[:8]
 
 
+def _profile_arg(hermes_home: str | None = None) -> str:
+    """Return ``--profile <name>`` only when HERMES_HOME is a named profile.
+
+    For ``~/.hermes/profiles/<name>``, returns ``"--profile <name>"``.
+    For the default profile or hash-based custom paths, returns the empty string.
+
+    Args:
+        hermes_home: Optional explicit HERMES_HOME path. Defaults to the current
+            ``get_hermes_home()`` value. Should be passed when generating a
+            service definition for a different user (e.g. system service).
+    """
+    import re
+    from pathlib import Path as _Path
+    home = Path(hermes_home or str(get_hermes_home())).resolve()
+    default = (_Path.home() / ".hermes").resolve()
+    if home == default:
+        return ""
+    profiles_root = (default / "profiles").resolve()
+    try:
+        rel = home.relative_to(profiles_root)
+        parts = rel.parts
+        if len(parts) == 1 and re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", parts[0]):
+            return f"--profile {parts[0]}"
+    except ValueError:
+        pass
+    return ""
+
+
 def get_service_name() -> str:
     """Derive a systemd service name scoped to this HERMES_HOME.
 
@@ -626,6 +654,7 @@ def generate_systemd_unit(system: bool = False, run_as_user: str | None = None) 
     if system:
         username, group_name, home_dir = _system_service_identity(run_as_user)
         hermes_home = _hermes_home_for_target_user(home_dir)
+        profile_arg = _profile_arg(hermes_home)
         path_entries.extend(_build_user_local_paths(Path(home_dir), path_entries))
         path_entries.extend(common_bin_paths)
         sane_path = ":".join(path_entries)
@@ -640,7 +669,7 @@ StartLimitBurst=5
 Type=simple
 User={username}
 Group={group_name}
-ExecStart={python_path} -m hermes_cli.main gateway run --replace
+ExecStart={python_path} -m hermes_cli.main{f" {profile_arg}" if profile_arg else ""} gateway run --replace
 WorkingDirectory={working_dir}
 Environment="HOME={home_dir}"
 Environment="USER={username}"
@@ -661,6 +690,7 @@ WantedBy=multi-user.target
 """
 
     hermes_home = str(get_hermes_home().resolve())
+    profile_arg = _profile_arg(hermes_home)
     path_entries.extend(_build_user_local_paths(Path.home(), path_entries))
     path_entries.extend(common_bin_paths)
     sane_path = ":".join(path_entries)
@@ -672,7 +702,7 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart={python_path} -m hermes_cli.main gateway run --replace
+ExecStart={python_path} -m hermes_cli.main{f" {profile_arg}" if profile_arg else ""} gateway run --replace
 WorkingDirectory={working_dir}
 Environment="PATH={sane_path}"
 Environment="VIRTUAL_ENV={venv_dir}"
@@ -965,6 +995,7 @@ def generate_launchd_plist() -> str:
     log_dir = get_hermes_home() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     label = get_launchd_label()
+    profile_arg = _profile_arg(hermes_home)
     # Build a sane PATH for the launchd plist.  launchd provides only a
     # minimal default (/usr/bin:/bin:/usr/sbin:/sbin) which misses Homebrew,
     # nvm, cargo, etc.  We prepend venv/bin and node_modules/.bin (matching
@@ -986,21 +1017,32 @@ def generate_launchd_plist() -> str:
         dict.fromkeys(priority_dirs + [p for p in os.environ.get("PATH", "").split(":") if p])
     )
 
+    # Build ProgramArguments array, including --profile when using a named profile
+    prog_args = [
+        f"<string>{python_path}</string>",
+        "<string>-m</string>",
+        "<string>hermes_cli.main</string>",
+    ]
+    if profile_arg:
+        for part in profile_arg.split():
+            prog_args.append(f"<string>{part}</string>")
+    prog_args.extend([
+        "<string>gateway</string>",
+        "<string>run</string>",
+        "<string>--replace</string>",
+    ])
+    prog_args_xml = "\n        ".join(prog_args)
+
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
     <string>{label}</string>
-    
+
     <key>ProgramArguments</key>
     <array>
-        <string>{python_path}</string>
-        <string>-m</string>
-        <string>hermes_cli.main</string>
-        <string>gateway</string>
-        <string>run</string>
-        <string>--replace</string>
+        {prog_args_xml}
     </array>
     
     <key>WorkingDirectory</key>
@@ -1121,7 +1163,7 @@ def launchd_start():
     try:
         subprocess.run(["launchctl", "kickstart", f"{_launchd_domain()}/{label}"], check=True, timeout=30)
     except subprocess.CalledProcessError as e:
-        if e.returncode != 3:
+        if e.returncode not in (3, 113):
             raise
         print("↻ launchd job was unloaded; reloading service definition")
         subprocess.run(["launchctl", "bootstrap", _launchd_domain(), str(plist_path)], check=True, timeout=30)
@@ -1183,7 +1225,7 @@ def launchd_restart():
         subprocess.run(["launchctl", "kickstart", "-k", target], check=True, timeout=90)
         print("✓ Service restarted")
     except subprocess.CalledProcessError as e:
-        if e.returncode != 3:
+        if e.returncode not in (3, 113):
             raise
         # Job not loaded — bootstrap and start fresh
         print("↻ launchd job was unloaded; reloading")
@@ -1546,6 +1588,34 @@ _PLATFORMS = [
              "help": "Chat ID for scheduled results and notifications."},
         ],
     },
+    {
+        "key": "bluebubbles",
+        "label": "BlueBubbles (iMessage)",
+        "emoji": "💬",
+        "token_var": "BLUEBUBBLES_SERVER_URL",
+        "setup_instructions": [
+            "1. Install BlueBubbles on a Mac that will act as your iMessage server:",
+            "   https://bluebubbles.app/",
+            "2. Complete the BlueBubbles setup wizard — sign in with your Apple ID",
+            "3. In BlueBubbles Settings → API, note the Server URL and password",
+            "4. The server URL is typically http://<your-mac-ip>:1234",
+            "5. Hermes connects via the BlueBubbles REST API and receives",
+            "   incoming messages via a local webhook",
+            "6. To authorize users, use DM pairing: hermes pairing generate bluebubbles",
+            "   Share the code — the user sends it via iMessage to get approved",
+        ],
+        "vars": [
+            {"name": "BLUEBUBBLES_SERVER_URL", "prompt": "BlueBubbles server URL (e.g. http://192.168.1.10:1234)", "password": False,
+             "help": "The URL shown in BlueBubbles Settings → API."},
+            {"name": "BLUEBUBBLES_PASSWORD", "prompt": "BlueBubbles server password", "password": True,
+             "help": "The password shown in BlueBubbles Settings → API."},
+            {"name": "BLUEBUBBLES_ALLOWED_USERS", "prompt": "Pre-authorized phone numbers or iMessage IDs (comma-separated, or leave empty for DM pairing)", "password": False,
+             "is_allowlist": True,
+             "help": "Optional — pre-authorize specific users. Leave empty to use DM pairing instead (recommended)."},
+            {"name": "BLUEBUBBLES_HOME_CHANNEL", "prompt": "Home channel (phone number or iMessage ID for cron/notifications, or empty)", "password": False,
+             "help": "Phone number or Apple ID to deliver cron results and notifications to."},
+        ],
+    },
 ]
 
 
@@ -1803,8 +1873,7 @@ def _setup_signal():
         print_warning("signal-cli not found on PATH.")
         print_info("  Signal requires signal-cli running as an HTTP daemon.")
         print_info("  Install options:")
-        print_info("    Linux:  sudo apt install signal-cli")
-        print_info("            or download from https://github.com/AsamK/signal-cli")
+        print_info("    Linux:  download from https://github.com/AsamK/signal-cli/releases")
         print_info("    macOS:  brew install signal-cli")
         print_info("    Docker: bbernhard/signal-cli-rest-api")
         print()

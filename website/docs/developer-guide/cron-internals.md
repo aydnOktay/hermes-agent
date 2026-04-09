@@ -153,6 +153,7 @@ Cron job results can be delivered to any supported platform:
 | DingTalk | `dingtalk` | Deliver to DingTalk |
 | Feishu | `feishu` | Deliver to Feishu |
 | WeCom | `wecom` | Deliver to WeCom |
+| BlueBubbles | `bluebubbles` | Deliver to iMessage via BlueBubbles |
 
 For Telegram topics, use the format `telegram:<chat_id>:<thread_id>` (e.g., `telegram:-1001234567890:17585`).
 
@@ -185,7 +186,7 @@ The `hermes cron` CLI provides direct job management:
 
 ```bash
 hermes cron list                    # Show all jobs
-hermes cron add                     # Interactive job creation
+hermes cron create                  # Interactive job creation (alias: add)
 hermes cron edit <job_id>           # Edit job configuration
 hermes cron pause <job_id>          # Pause a running job
 hermes cron resume <job_id>         # Resume a paused job

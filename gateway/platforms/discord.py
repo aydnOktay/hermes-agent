@@ -55,6 +55,7 @@ from gateway.platforms.base import (
     cache_document_from_bytes,
     SUPPORTED_DOCUMENT_TYPES,
 )
+from tools.url_safety import is_safe_url
 
 
 def _clean_discord_id(entry: str) -> str:
@@ -454,6 +455,9 @@ class DiscordAdapter(BasePlatformAdapter):
         self._seen_messages: Dict[str, float] = {}
         self._SEEN_TTL = 300   # 5 minutes
         self._SEEN_MAX = 2000  # prune threshold
+        # Reply threading mode: "off" (no replies), "first" (reply on first
+        # chunk only, default), "all" (reply-reference on every chunk).
+        self._reply_to_mode: str = getattr(config, 'reply_to_mode', 'first') or 'first'
 
     async def connect(self) -> bool:
         """Connect to Discord and start receiving events."""
@@ -525,10 +529,17 @@ class DiscordAdapter(BasePlatformAdapter):
             intents.members = any(not entry.isdigit() for entry in self._allowed_user_ids)
             intents.voice_states = True
 
-            # Create bot
+            # Resolve proxy (DISCORD_PROXY > generic env vars > macOS system proxy)
+            from gateway.platforms.base import resolve_proxy_url, proxy_kwargs_for_bot
+            proxy_url = resolve_proxy_url(platform_env_var="DISCORD_PROXY")
+            if proxy_url:
+                logger.info("[%s] Using proxy for Discord: %s", self.name, proxy_url)
+
+            # Create bot — proxy= for HTTP, connector= for SOCKS
             self._client = commands.Bot(
                 command_prefix="!",  # Not really used, we handle raw messages
                 intents=intents,
+                **proxy_kwargs_for_bot(proxy_url),
             )
             adapter_self = self  # capture for closure
 
@@ -773,7 +784,7 @@ class DiscordAdapter(BasePlatformAdapter):
             message_ids = []
             reference = None
 
-            if reply_to:
+            if reply_to and self._reply_to_mode != "off":
                 try:
                     ref_msg = await channel.fetch_message(int(reply_to))
                     reference = ref_msg
@@ -781,7 +792,10 @@ class DiscordAdapter(BasePlatformAdapter):
                     logger.debug("Could not fetch reply-to message: %s", e)
 
             for i, chunk in enumerate(chunks):
-                chunk_reference = reference if i == 0 else None
+                if self._reply_to_mode == "all":
+                    chunk_reference = reference
+                else:  # "first" (default) or "off"
+                    chunk_reference = reference if i == 0 else None
                 try:
                     msg = await channel.send(
                         content=chunk,
@@ -1285,6 +1299,10 @@ class DiscordAdapter(BasePlatformAdapter):
         if not self._client:
             return SendResult(success=False, error="Not connected")
 
+        if not is_safe_url(image_url):
+            logger.warning("[%s] Blocked unsafe image URL during Discord send_image", self.name)
+            return await super().send_image(chat_id, image_url, caption, reply_to, metadata=metadata)
+
         try:
             import aiohttp
 
@@ -1296,8 +1314,11 @@ class DiscordAdapter(BasePlatformAdapter):
 
             # Download the image and send as a Discord file attachment
             # (Discord renders attachments inline, unlike plain URLs)
-            async with aiohttp.ClientSession() as session:
-                async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            from gateway.platforms.base import resolve_proxy_url, proxy_kwargs_for_aiohttp
+            _proxy = resolve_proxy_url(platform_env_var="DISCORD_PROXY")
+            _sess_kw, _req_kw = proxy_kwargs_for_aiohttp(_proxy)
+            async with aiohttp.ClientSession(**_sess_kw) as session:
+                async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=30), **_req_kw) as resp:
                     if resp.status != 200:
                         raise Exception(f"Failed to download image: HTTP {resp.status}")
 
@@ -1574,7 +1595,7 @@ class DiscordAdapter(BasePlatformAdapter):
             await self._run_simple_slash(interaction, f"/model {name}".strip())
 
         @tree.command(name="reasoning", description="Show or change reasoning effort")
-        @discord.app_commands.describe(effort="Reasoning effort: xhigh, high, medium, low, minimal, or none.")
+        @discord.app_commands.describe(effort="Reasoning effort: none, minimal, low, medium, high, or xhigh.")
         async def slash_reasoning(interaction: discord.Interaction, effort: str = ""):
             await self._run_simple_slash(interaction, f"/reasoning {effort}".strip())
 
@@ -1680,6 +1701,62 @@ class DiscordAdapter(BasePlatformAdapter):
             await interaction.response.defer(ephemeral=True)
             await self._handle_thread_create_slash(interaction, name, message, auto_archive_duration)
 
+        @tree.command(name="queue", description="Queue a prompt for the next turn (doesn't interrupt)")
+        @discord.app_commands.describe(prompt="The prompt to queue")
+        async def slash_queue(interaction: discord.Interaction, prompt: str):
+            await self._run_simple_slash(interaction, f"/queue {prompt}", "Queued for the next turn.")
+
+        @tree.command(name="background", description="Run a prompt in the background")
+        @discord.app_commands.describe(prompt="The prompt to run in the background")
+        async def slash_background(interaction: discord.Interaction, prompt: str):
+            await self._run_simple_slash(interaction, f"/background {prompt}", "Background task started~")
+
+        @tree.command(name="btw", description="Ephemeral side question using session context")
+        @discord.app_commands.describe(question="Your side question (no tools, not persisted)")
+        async def slash_btw(interaction: discord.Interaction, question: str):
+            await self._run_simple_slash(interaction, f"/btw {question}")
+
+        # Register installed skills as native slash commands (parity with
+        # Telegram, which uses telegram_menu_commands() in commands.py).
+        # Discord allows up to 100 application commands globally.
+        _DISCORD_CMD_LIMIT = 100
+        try:
+            from hermes_cli.commands import discord_skill_commands
+
+            existing_names = {cmd.name for cmd in tree.get_commands()}
+            remaining_slots = max(0, _DISCORD_CMD_LIMIT - len(existing_names))
+
+            skill_entries, skipped = discord_skill_commands(
+                max_slots=remaining_slots,
+                reserved_names=existing_names,
+            )
+
+            for discord_name, description, cmd_key in skill_entries:
+                # Closure factory to capture cmd_key per iteration
+                def _make_skill_handler(_key: str):
+                    async def _skill_slash(interaction: discord.Interaction, args: str = ""):
+                        await self._run_simple_slash(interaction, f"{_key} {args}".strip())
+                    return _skill_slash
+
+                handler = _make_skill_handler(cmd_key)
+                handler.__name__ = f"skill_{discord_name.replace('-', '_')}"
+
+                cmd = discord.app_commands.Command(
+                    name=discord_name,
+                    description=description,
+                    callback=handler,
+                )
+                discord.app_commands.describe(args="Optional arguments for the skill")(cmd)
+                tree.add_command(cmd)
+
+            if skipped:
+                logger.warning(
+                    "[%s] Discord slash command limit reached (%d): %d skill(s) not registered",
+                    self.name, _DISCORD_CMD_LIMIT, skipped,
+                )
+        except Exception as exc:
+            logger.warning("[%s] Failed to register skill slash commands: %s", self.name, exc)
+
     def _build_slash_event(self, interaction: discord.Interaction, text: str) -> MessageEvent:
         """Build a MessageEvent from a Discord slash command interaction."""
         is_dm = isinstance(interaction.channel, discord.DMChannel)
@@ -1700,8 +1777,9 @@ class DiscordAdapter(BasePlatformAdapter):
             if hasattr(interaction.channel, "guild") and interaction.channel.guild:
                 chat_name = f"{interaction.channel.guild.name} / #{chat_name}"
 
-        # Get channel topic (if available)
-        chat_topic = getattr(interaction.channel, "topic", None)
+        # Get channel topic (if available).
+        # For forum threads, inherit the parent forum's topic.
+        chat_topic = self._get_effective_topic(interaction.channel, is_thread=is_thread)
 
         source = self.build_source(
             chat_id=str(interaction.channel_id),
@@ -1775,6 +1853,10 @@ class DiscordAdapter(BasePlatformAdapter):
 
         chat_name = f"{guild_name} / {thread_name}" if guild_name else thread_name
 
+        # Inherit forum topic when the thread was created inside a forum channel.
+        _chan = getattr(interaction, "channel", None)
+        chat_topic = self._get_effective_topic(_chan, is_thread=True) if _chan else None
+
         source = self.build_source(
             chat_id=thread_id,
             chat_name=chat_name,
@@ -1782,6 +1864,7 @@ class DiscordAdapter(BasePlatformAdapter):
             user_id=str(interaction.user.id),
             user_name=interaction.user.display_name,
             thread_id=thread_id,
+            chat_topic=chat_topic,
         )
 
         event = MessageEvent(
@@ -1983,6 +2066,66 @@ class DiscordAdapter(BasePlatformAdapter):
         except Exception as e:
             return SendResult(success=False, error=str(e))
 
+    async def send_model_picker(
+        self,
+        chat_id: str,
+        providers: list,
+        current_model: str,
+        current_provider: str,
+        session_key: str,
+        on_model_selected,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send an interactive select-menu model picker.
+
+        Two-step drill-down: provider dropdown → model dropdown.
+        Uses Discord embeds + Select menus via ``ModelPickerView``.
+        """
+        if not self._client or not DISCORD_AVAILABLE:
+            return SendResult(success=False, error="Not connected")
+
+        try:
+            # Resolve target channel (use thread_id if present)
+            target_id = chat_id
+            if metadata and metadata.get("thread_id"):
+                target_id = metadata["thread_id"]
+
+            channel = self._client.get_channel(int(target_id))
+            if not channel:
+                channel = await self._client.fetch_channel(int(target_id))
+
+            try:
+                from hermes_cli.providers import get_label
+                provider_label = get_label(current_provider)
+            except Exception:
+                provider_label = current_provider
+
+            embed = discord.Embed(
+                title="⚙ Model Configuration",
+                description=(
+                    f"Current model: `{current_model or 'unknown'}`\n"
+                    f"Provider: {provider_label}\n\n"
+                    f"Select a provider:"
+                ),
+                color=discord.Color.blue(),
+            )
+
+            view = ModelPickerView(
+                providers=providers,
+                current_model=current_model,
+                current_provider=current_provider,
+                session_key=session_key,
+                on_model_selected=on_model_selected,
+                allowed_user_ids=self._allowed_user_ids,
+            )
+
+            msg = await channel.send(embed=embed, view=view)
+            return SendResult(success=True, message_id=str(msg.id))
+
+        except Exception as e:
+            logger.warning("[%s] send_model_picker failed: %s", self.name, e)
+            return SendResult(success=False, error=str(e))
+
     def _get_parent_channel_id(self, channel: Any) -> Optional[str]:
         """Return the parent channel ID for a Discord thread-like channel, if present."""
         parent = getattr(channel, "parent", None)
@@ -2006,6 +2149,15 @@ class DiscordAdapter(BasePlatformAdapter):
             if type_value == 15:
                 return True
         return False
+
+    def _get_effective_topic(self, channel: Any, is_thread: bool = False) -> Optional[str]:
+        """Return the channel topic, falling back to the parent forum's topic for forum threads."""
+        topic = getattr(channel, "topic", None)
+        if not topic and is_thread:
+            parent = getattr(channel, "parent", None)
+            if parent and self._is_forum_parent(parent):
+                topic = getattr(parent, "topic", None)
+        return topic
 
     def _format_thread_chat_name(self, thread: Any) -> str:
         """Build a readable chat name for thread-like Discord channels, including forum context when available."""
@@ -2072,9 +2224,11 @@ class DiscordAdapter(BasePlatformAdapter):
         # UNLESS the channel is in the free-response list or the message is
         # in a thread where the bot has already participated.
         #
-        # Config (all settable via discord.* in config.yaml):
+        # Config (all settable via discord.* in config.yaml or DISCORD_* env vars):
         #   discord.require_mention: Require @mention in server channels (default: true)
         #   discord.free_response_channels: Channel IDs where bot responds without mention
+        #   discord.ignored_channels: Channel IDs where bot NEVER responds (even when mentioned)
+        #   discord.no_thread_channels: Channel IDs where bot responds directly without creating thread
         #   discord.auto_thread: Auto-create thread on @mention in channels (default: true)
 
         thread_id = None
@@ -2085,9 +2239,18 @@ class DiscordAdapter(BasePlatformAdapter):
             parent_channel_id = self._get_parent_channel_id(message.channel)
 
         if not isinstance(message.channel, discord.DMChannel):
+            # Check ignored channels first - never respond even when mentioned
+            ignored_channels_raw = os.getenv("DISCORD_IGNORED_CHANNELS", "")
+            ignored_channels = {ch.strip() for ch in ignored_channels_raw.split(",") if ch.strip()}
+            channel_ids = {str(message.channel.id)}
+            if parent_channel_id:
+                channel_ids.add(parent_channel_id)
+            if channel_ids & ignored_channels:
+                logger.debug("[%s] Ignoring message in ignored channel: %s", self.name, channel_ids)
+                return
+
             free_channels_raw = os.getenv("DISCORD_FREE_RESPONSE_CHANNELS", "")
             free_channels = {ch.strip() for ch in free_channels_raw.split(",") if ch.strip()}
-            channel_ids = {str(message.channel.id)}
             if parent_channel_id:
                 channel_ids.add(parent_channel_id)
 
@@ -2109,10 +2272,14 @@ class DiscordAdapter(BasePlatformAdapter):
         # Auto-thread: when enabled, automatically create a thread for every
         # @mention in a text channel so each conversation is isolated (like Slack).
         # Messages already inside threads or DMs are unaffected.
+        # no_thread_channels: channels where bot responds directly without thread.
         auto_threaded_channel = None
         if not is_thread and not isinstance(message.channel, discord.DMChannel):
+            no_thread_channels_raw = os.getenv("DISCORD_NO_THREAD_CHANNELS", "")
+            no_thread_channels = {ch.strip() for ch in no_thread_channels_raw.split(",") if ch.strip()}
+            skip_thread = bool(channel_ids & no_thread_channels)
             auto_thread = os.getenv("DISCORD_AUTO_THREAD", "true").lower() in ("true", "1", "yes")
-            if auto_thread:
+            if auto_thread and not skip_thread:
                 thread = await self._auto_create_thread(message)
                 if thread:
                     is_thread = True
@@ -2159,8 +2326,10 @@ class DiscordAdapter(BasePlatformAdapter):
             if hasattr(message.channel, "guild") and message.channel.guild:
                 chat_name = f"{message.channel.guild.name} / #{chat_name}"
 
-        # Get channel topic (if available - TextChannels have topics, DMs/threads don't)
-        chat_topic = getattr(message.channel, "topic", None)
+        # Get channel topic (if available - TextChannels have topics, DMs/threads don't).
+        # For threads whose parent is a forum channel, inherit the parent's topic
+        # so forum descriptions (e.g. project instructions) appear in the session context.
+        chat_topic = self._get_effective_topic(message.channel, is_thread=is_thread)
 
         # Build source
         source = self.build_source(
@@ -2223,7 +2392,7 @@ class DiscordAdapter(BasePlatformAdapter):
                         ext or "unknown", content_type,
                     )
                 else:
-                    MAX_DOC_BYTES = 20 * 1024 * 1024
+                    MAX_DOC_BYTES = 32 * 1024 * 1024
                     if att.size and att.size > MAX_DOC_BYTES:
                         logger.warning(
                             "[Discord] Document too large (%s bytes), skipping: %s",
@@ -2232,10 +2401,14 @@ class DiscordAdapter(BasePlatformAdapter):
                     else:
                         try:
                             import aiohttp
-                            async with aiohttp.ClientSession() as session:
+                            from gateway.platforms.base import resolve_proxy_url, proxy_kwargs_for_aiohttp
+                            _proxy = resolve_proxy_url(platform_env_var="DISCORD_PROXY")
+                            _sess_kw, _req_kw = proxy_kwargs_for_aiohttp(_proxy)
+                            async with aiohttp.ClientSession(**_sess_kw) as session:
                                 async with session.get(
                                     att.url,
                                     timeout=aiohttp.ClientTimeout(total=30),
+                                    **_req_kw,
                                 ) as resp:
                                     if resp.status != 200:
                                         raise Exception(f"HTTP {resp.status}")
@@ -2247,9 +2420,9 @@ class DiscordAdapter(BasePlatformAdapter):
                             media_urls.append(cached_path)
                             media_types.append(doc_mime)
                             logger.info("[Discord] Cached user document: %s", cached_path)
-                            # Inject text content for .txt/.md files (capped at 100 KB)
+                            # Inject text content for plain-text documents (capped at 100 KB)
                             MAX_TEXT_INJECT_BYTES = 100 * 1024
-                            if ext in (".md", ".txt") and len(raw_bytes) <= MAX_TEXT_INJECT_BYTES:
+                            if ext in (".md", ".txt", ".log") and len(raw_bytes) <= MAX_TEXT_INJECT_BYTES:
                                 try:
                                     text_content = raw_bytes.decode("utf-8")
                                     display_name = att.filename or f"document{ext}"
@@ -2474,3 +2647,218 @@ if DISCORD_AVAILABLE:
             self.resolved = True
             for child in self.children:
                 child.disabled = True
+
+    class ModelPickerView(discord.ui.View):
+        """Interactive select-menu view for model switching.
+
+        Two-step drill-down: provider dropdown → model dropdown.
+        Edits the original message in-place as the user navigates.
+        Times out after 2 minutes.
+        """
+
+        def __init__(
+            self,
+            providers: list,
+            current_model: str,
+            current_provider: str,
+            session_key: str,
+            on_model_selected,
+            allowed_user_ids: set,
+        ):
+            super().__init__(timeout=120)
+            self.providers = providers
+            self.current_model = current_model
+            self.current_provider = current_provider
+            self.session_key = session_key
+            self.on_model_selected = on_model_selected
+            self.allowed_user_ids = allowed_user_ids
+            self.resolved = False
+            self._selected_provider: str = ""
+
+            self._build_provider_select()
+
+        def _check_auth(self, interaction: discord.Interaction) -> bool:
+            if not self.allowed_user_ids:
+                return True
+            return str(interaction.user.id) in self.allowed_user_ids
+
+        def _build_provider_select(self):
+            """Build the provider dropdown menu."""
+            self.clear_items()
+            options = []
+            for p in self.providers:
+                count = p.get("total_models", len(p.get("models", [])))
+                label = f"{p['name']} ({count} models)"
+                desc = "current" if p.get("is_current") else None
+                options.append(
+                    discord.SelectOption(
+                        label=label[:100],
+                        value=p["slug"],
+                        description=desc,
+                    )
+                )
+            if not options:
+                return
+
+            select = discord.ui.Select(
+                placeholder="Choose a provider...",
+                options=options[:25],
+                custom_id="model_provider_select",
+            )
+            select.callback = self._on_provider_selected
+            self.add_item(select)
+
+            cancel_btn = discord.ui.Button(
+                label="Cancel", style=discord.ButtonStyle.red, custom_id="model_cancel"
+            )
+            cancel_btn.callback = self._on_cancel
+            self.add_item(cancel_btn)
+
+        def _build_model_select(self, provider_slug: str):
+            """Build the model dropdown for a specific provider."""
+            self.clear_items()
+            provider = next(
+                (p for p in self.providers if p["slug"] == provider_slug), None
+            )
+            if not provider:
+                return
+
+            models = provider.get("models", [])
+            options = []
+            for model_id in models[:25]:
+                short = model_id.split("/")[-1] if "/" in model_id else model_id
+                options.append(
+                    discord.SelectOption(
+                        label=short[:100],
+                        value=model_id[:100],
+                    )
+                )
+            if not options:
+                return
+
+            select = discord.ui.Select(
+                placeholder=f"Choose a model from {provider.get('name', provider_slug)}...",
+                options=options,
+                custom_id="model_model_select",
+            )
+            select.callback = self._on_model_selected
+            self.add_item(select)
+
+            back_btn = discord.ui.Button(
+                label="◀ Back", style=discord.ButtonStyle.grey, custom_id="model_back"
+            )
+            back_btn.callback = self._on_back
+            self.add_item(back_btn)
+
+            cancel_btn = discord.ui.Button(
+                label="Cancel", style=discord.ButtonStyle.red, custom_id="model_cancel2"
+            )
+            cancel_btn.callback = self._on_cancel
+            self.add_item(cancel_btn)
+
+        async def _on_provider_selected(self, interaction: discord.Interaction):
+            if not self._check_auth(interaction):
+                await interaction.response.send_message(
+                    "You're not authorized~", ephemeral=True
+                )
+                return
+
+            provider_slug = interaction.data["values"][0]
+            self._selected_provider = provider_slug
+            provider = next(
+                (p for p in self.providers if p["slug"] == provider_slug), None
+            )
+            pname = provider.get("name", provider_slug) if provider else provider_slug
+
+            self._build_model_select(provider_slug)
+
+            total = provider.get("total_models", 0) if provider else 0
+            shown = min(len(provider.get("models", [])), 25) if provider else 0
+            extra = f"\n*{total - shown} more available — type `/model <name>` directly*" if total > shown else ""
+
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="⚙ Model Configuration",
+                    description=f"Provider: **{pname}**\nSelect a model:{extra}",
+                    color=discord.Color.blue(),
+                ),
+                view=self,
+            )
+
+        async def _on_model_selected(self, interaction: discord.Interaction):
+            if self.resolved:
+                await interaction.response.send_message(
+                    "Already resolved~", ephemeral=True
+                )
+                return
+            if not self._check_auth(interaction):
+                await interaction.response.send_message(
+                    "You're not authorized~", ephemeral=True
+                )
+                return
+
+            self.resolved = True
+            model_id = interaction.data["values"][0]
+
+            try:
+                result_text = await self.on_model_selected(
+                    str(interaction.channel_id),
+                    model_id,
+                    self._selected_provider,
+                )
+            except Exception as exc:
+                result_text = f"Error switching model: {exc}"
+
+            self.clear_items()
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="⚙ Model Switched",
+                    description=result_text,
+                    color=discord.Color.green(),
+                ),
+                view=self,
+            )
+
+        async def _on_back(self, interaction: discord.Interaction):
+            if not self._check_auth(interaction):
+                await interaction.response.send_message(
+                    "You're not authorized~", ephemeral=True
+                )
+                return
+
+            self._build_provider_select()
+
+            try:
+                from hermes_cli.providers import get_label
+                provider_label = get_label(self.current_provider)
+            except Exception:
+                provider_label = self.current_provider
+
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="⚙ Model Configuration",
+                    description=(
+                        f"Current model: `{self.current_model or 'unknown'}`\n"
+                        f"Provider: {provider_label}\n\n"
+                        f"Select a provider:"
+                    ),
+                    color=discord.Color.blue(),
+                ),
+                view=self,
+            )
+
+        async def _on_cancel(self, interaction: discord.Interaction):
+            self.resolved = True
+            self.clear_items()
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="⚙ Model Configuration",
+                    description="Model selection cancelled.",
+                    color=discord.Color.greyple(),
+                ),
+                view=self,
+            )
+
+        async def on_timeout(self):
+            self.resolved = True
+            self.clear_items()

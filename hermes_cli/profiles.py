@@ -26,7 +26,7 @@ import shutil
 import stat
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import List, Optional
 
@@ -102,7 +102,7 @@ _RESERVED_NAMES = frozenset({
 # Hermes subcommands that cannot be used as profile names/aliases
 _HERMES_SUBCOMMANDS = frozenset({
     "chat", "model", "gateway", "setup", "whatsapp", "login", "logout",
-    "status", "cron", "doctor", "config", "pairing", "skills", "tools",
+    "status", "cron", "doctor", "dump", "config", "pairing", "skills", "tools",
     "mcp", "sessions", "insights", "version", "update", "uninstall",
     "profile", "plugins", "honcho", "acp",
 })
@@ -517,7 +517,6 @@ def delete_profile(name: str, yes: bool = False) -> Path:
     ]
 
     # Check for service
-    from hermes_cli.gateway import _profile_suffix, get_service_name
     wrapper_path = _get_wrapper_dir() / name
     has_wrapper = wrapper_path.exists()
     if has_wrapper:
@@ -1008,7 +1007,7 @@ _hermes_completion() {
 
     # Top-level subcommands
     if [[ "$COMP_CWORD" == 1 ]]; then
-        local commands="chat model gateway setup status cron doctor config skills tools mcp sessions profile update version"
+        local commands="chat model gateway setup status cron doctor dump config skills tools mcp sessions profile update version"
         COMPREPLY=($(compgen -W "$commands" -- "$cur"))
     fi
 }
@@ -1033,7 +1032,7 @@ _hermes() {
     _arguments \\
         '-p[Profile name]:profile:($profiles)' \\
         '--profile[Profile name]:profile:($profiles)' \\
-        '1:command:(chat model gateway setup status cron doctor config skills tools mcp sessions profile update version)' \\
+        '1:command:(chat model gateway setup status cron doctor dump config skills tools mcp sessions profile update version)' \\
         '*::arg:->args'
 
     case $words[1] in
