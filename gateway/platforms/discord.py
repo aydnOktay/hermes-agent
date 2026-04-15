@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import Callable, Dict, Optional, Any
 
 logger = logging.getLogger(__name__)
@@ -31,10 +32,43 @@ try:
     DISCORD_AVAILABLE = True
 except ImportError:
     DISCORD_AVAILABLE = False
-    discord = None
+    class _FallbackAppCommandGroup:
+        def __init__(self, *, name, description, parent=None):
+            self.name = name
+            self.description = description
+            self.parent = parent
+            self._children = {}
+            if parent is not None and hasattr(parent, "add_command"):
+                parent.add_command(self)
+
+        def add_command(self, cmd):
+            self._children[getattr(cmd, "name", "")] = cmd
+
+    class _FallbackAppCommand:
+        def __init__(self, *, name, description, callback, parent=None):
+            self.name = name
+            self.description = description
+            self.callback = callback
+            self.parent = parent
+
+    discord = SimpleNamespace(
+        DMChannel=type("DMChannel", (), {}),
+        Thread=type("Thread", (), {}),
+        ForumChannel=type("ForumChannel", (), {}),
+        Interaction=object,
+        Intents=SimpleNamespace(default=lambda: SimpleNamespace()),
+        opus=SimpleNamespace(is_loaded=lambda: True, load_opus=lambda _path: None),
+        app_commands=SimpleNamespace(
+            describe=lambda **kwargs: (lambda fn: fn),
+            choices=lambda **kwargs: (lambda fn: fn),
+            Choice=lambda **kwargs: SimpleNamespace(**kwargs),
+            Group=_FallbackAppCommandGroup,
+            Command=_FallbackAppCommand,
+        ),
+    )
     DiscordMessage = Any
-    Intents = Any
-    commands = None
+    Intents = discord.Intents
+    commands = SimpleNamespace(Bot=object)
 
 import sys
 from pathlib import Path as _Path
@@ -465,7 +499,7 @@ class DiscordAdapter(BasePlatformAdapter):
 
     async def connect(self) -> bool:
         """Connect to Discord and start receiving events."""
-        if not DISCORD_AVAILABLE:
+        if not DISCORD_AVAILABLE and commands is None:
             logger.error("[%s] discord.py not installed. Run: pip install discord.py", self.name)
             return False
 

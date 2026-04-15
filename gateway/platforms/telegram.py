@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+from types import SimpleNamespace
 from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
@@ -34,16 +35,34 @@ except ImportError:
     Update = Any
     Bot = Any
     Message = Any
-    InlineKeyboardButton = Any
-    InlineKeyboardMarkup = Any
-    Application = Any
+
+    class InlineKeyboardButton:  # pragma: no cover - simple fallback shim
+        def __init__(self, text: str, callback_data: Optional[str] = None):
+            self.text = text
+            self.callback_data = callback_data
+
+    class InlineKeyboardMarkup:  # pragma: no cover - simple fallback shim
+        def __init__(self, inline_keyboard: List[List[InlineKeyboardButton]]):
+            self.inline_keyboard = inline_keyboard
+
+    class _MissingTelegramApplication:  # pragma: no cover - simple fallback shim
+        @staticmethod
+        def builder():
+            raise RuntimeError("python-telegram-bot is not installed")
+
+    Application = _MissingTelegramApplication
     CommandHandler = Any
     CallbackQueryHandler = Any
     TelegramMessageHandler = Any
-    HTTPXRequest = Any
-    filters = None
-    ParseMode = None
-    ChatType = None
+    HTTPXRequest = lambda **kwargs: SimpleNamespace(**kwargs)
+    filters = SimpleNamespace(TEXT=object(), COMMAND=object(), ALL=object())
+    ParseMode = SimpleNamespace(MARKDOWN_V2="MarkdownV2", MARKDOWN="Markdown")
+    ChatType = SimpleNamespace(
+        GROUP="group",
+        SUPERGROUP="supergroup",
+        CHANNEL="channel",
+        PRIVATE="private",
+    )
 
     # Mock ContextTypes so type annotations using ContextTypes.DEFAULT_TYPE
     # don't crash during class definition when the library isn't installed.
@@ -489,7 +508,7 @@ class TelegramAdapter(BasePlatformAdapter):
             TELEGRAM_WEBHOOK_PORT   Local listen port (default 8443)
             TELEGRAM_WEBHOOK_SECRET Secret token for update verification
         """
-        if not TELEGRAM_AVAILABLE:
+        if not TELEGRAM_AVAILABLE and not hasattr(Application, "builder"):
             logger.error(
                 "[%s] python-telegram-bot not installed. Run: pip install python-telegram-bot",
                 self.name,
