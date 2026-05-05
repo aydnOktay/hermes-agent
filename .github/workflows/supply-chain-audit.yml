@@ -29,7 +29,9 @@ jobs:
           HEAD="${{ github.event.pull_request.head.sha }}"
 
           # Get the full diff (added lines only)
-          DIFF=$(git diff "$BASE".."$HEAD" -- . ':!uv.lock' ':!*.lock' ':!package-lock.json' ':!yarn.lock' || true)
+          # Focus critical pattern scanning on executable/source changes.
+          # Excluding tests/docs/markdown avoids recurring false positives from fixtures.
+          DIFF=$(git diff "$BASE".."$HEAD" -- . ':!uv.lock' ':!*.lock' ':!package-lock.json' ':!yarn.lock' ':!tests/**' ':!docs/**' ':!*.md' || true)
 
           FINDINGS=""
           CRITICAL=false
