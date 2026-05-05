@@ -36,6 +36,7 @@ import re
 import sys
 import threading
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -163,6 +164,33 @@ def _extract_attachments(msg: dict) -> List[dict]:
             attachments.append({"type": "media", "path": path})
 
     return attachments
+
+
+def _parse_message_timestamp(ts) -> float:
+    """Normalize Hermes message timestamps to epoch seconds.
+
+    Supports numeric epochs, numeric strings, ISO-8601, and UTC ``Z`` suffix.
+    Returns 0.0 for unknown/unparseable values.
+    """
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    if isinstance(ts, str):
+        raw = ts.strip()
+        if not raw:
+            return 0.0
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+        iso = raw
+        if raw.endswith("Z"):
+            # Python <3.11 may not accept "Z" in fromisoformat.
+            iso = raw[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(iso).timestamp()
+        except Exception:
+            return 0.0
+    return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -374,26 +402,10 @@ class EventBridge:
             if not messages:
                 continue
 
-            # Normalize timestamps to float for comparison
-            def _ts_float(ts) -> float:
-                if isinstance(ts, (int, float)):
-                    return float(ts)
-                if isinstance(ts, str) and ts:
-                    try:
-                        return float(ts)
-                    except ValueError:
-                        # ISO string — parse to epoch
-                        try:
-                            from datetime import datetime
-                            return datetime.fromisoformat(ts).timestamp()
-                        except Exception:
-                            return 0.0
-                return 0.0
-
             # Find messages newer than our last seen timestamp
             new_messages = []
             for msg in messages:
-                ts = _ts_float(msg.get("timestamp", 0))
+                ts = _parse_message_timestamp(msg.get("timestamp", 0))
                 role = msg.get("role", "")
                 if role not in ("user", "assistant"):
                     continue
@@ -417,7 +429,7 @@ class EventBridge:
                 ))
 
             # Update last seen to the most recent message timestamp
-            all_ts = [_ts_float(m.get("timestamp", 0)) for m in messages]
+            all_ts = [_parse_message_timestamp(m.get("timestamp", 0)) for m in messages]
             if all_ts:
                 latest = max(all_ts)
                 if latest > last_seen:
