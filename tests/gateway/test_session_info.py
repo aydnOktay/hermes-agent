@@ -50,6 +50,19 @@ class TestFormatSessionInfo:
         assert "localhost:11434" in info
         assert "8K" in info
 
+    def test_unset_provider_does_not_claim_openrouter(self, runner, tmp_path):
+        """#159861: an empty resolved provider must not render as \"via OpenRouter\"."""
+        p1, p2, p3 = _patch_info(
+            tmp_path,
+            "model:\n  default: some-model\n  context_length: 8192\n",
+            "some-model",
+            {"provider": "", "base_url": "", "api_key": ""},
+        )
+        with p1, p2, p3:
+            info = runner._format_session_info()
+        assert "openrouter" not in info.lower()
+        assert "resolving..." in info
+
     def test_moa_preset_names_the_billed_aggregator(self, runner, tmp_path):
         """#112359: the preset name hides who pays; /model must name the acting aggregator."""
         p1, p2, p3 = _patch_info(tmp_path, "model:\n  default: review\n  provider: moa\n",
